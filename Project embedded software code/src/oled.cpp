@@ -1,0 +1,346 @@
+#include "oled.h"
+#include <Arduino.h>
+
+// Frame buffer for OLED display
+static uint8_t OLED_GRAM[OLED_HEIGHT / 8][OLED_WIDTH];
+
+// Font data - 8x6 ASCII
+const uint8_t ascii_8x6[][6] = {
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // space
+    {0x00, 0x00, 0x00, 0x2f, 0x00, 0x00}, // !
+    {0x00, 0x00, 0x07, 0x00, 0x07, 0x00}, // "
+    {0x00, 0x14, 0x7f, 0x14, 0x7f, 0x14}, // #
+    {0x00, 0x24, 0x2a, 0x7f, 0x2a, 0x12}, // $
+    {0x00, 0x62, 0x64, 0x08, 0x13, 0x23}, // %
+    {0x00, 0x36, 0x49, 0x55, 0x22, 0x50}, // &
+    {0x00, 0x00, 0x05, 0x03, 0x00, 0x00}, // '
+    {0x00, 0x00, 0x1c, 0x22, 0x41, 0x00}, // (
+    {0x00, 0x00, 0x41, 0x22, 0x1c, 0x00}, // )
+    {0x00, 0x14, 0x08, 0x3E, 0x08, 0x14}, // *
+    {0x00, 0x08, 0x08, 0x3E, 0x08, 0x08}, // +
+    {0x00, 0x00, 0x00, 0xA0, 0x60, 0x00}, // ,
+    {0x00, 0x08, 0x08, 0x08, 0x08, 0x08}, // -
+    {0x00, 0x00, 0x60, 0x60, 0x00, 0x00}, // .
+    {0x00, 0x20, 0x10, 0x08, 0x04, 0x02}, // /
+    {0x00, 0x3E, 0x51, 0x49, 0x45, 0x3E}, // 0
+    {0x00, 0x00, 0x42, 0x7F, 0x40, 0x00}, // 1
+    {0x00, 0x42, 0x61, 0x51, 0x49, 0x46}, // 2
+    {0x00, 0x21, 0x41, 0x45, 0x4B, 0x31}, // 3
+    {0x00, 0x18, 0x14, 0x12, 0x7F, 0x10}, // 4
+    {0x00, 0x27, 0x45, 0x45, 0x45, 0x39}, // 5
+    {0x00, 0x3C, 0x4A, 0x49, 0x49, 0x30}, // 6
+    {0x00, 0x01, 0x71, 0x09, 0x05, 0x03}, // 7
+    {0x00, 0x36, 0x49, 0x49, 0x49, 0x36}, // 8
+    {0x00, 0x06, 0x49, 0x49, 0x29, 0x1E}, // 9
+    {0x00, 0x00, 0x36, 0x36, 0x00, 0x00}, // :
+    {0x00, 0x00, 0x56, 0x36, 0x00, 0x00}, // ;
+    {0x00, 0x08, 0x14, 0x22, 0x41, 0x00}, // <
+    {0x00, 0x14, 0x14, 0x14, 0x14, 0x14}, // =
+    {0x00, 0x00, 0x41, 0x22, 0x14, 0x08}, // >
+    {0x00, 0x02, 0x01, 0x51, 0x09, 0x06}, // ?
+    {0x00, 0x32, 0x49, 0x59, 0x51, 0x3E}, // @
+    {0x00, 0x7C, 0x12, 0x11, 0x12, 0x7C}, // A
+    {0x00, 0x7F, 0x49, 0x49, 0x49, 0x36}, // B
+    {0x00, 0x3E, 0x41, 0x41, 0x41, 0x22}, // C
+    {0x00, 0x7F, 0x41, 0x41, 0x22, 0x1C}, // D
+    {0x00, 0x7F, 0x49, 0x49, 0x49, 0x41}, // E
+    {0x00, 0x7F, 0x09, 0x09, 0x09, 0x01}, // F
+    {0x00, 0x3E, 0x41, 0x49, 0x49, 0x7A}, // G
+    {0x00, 0x7F, 0x08, 0x08, 0x08, 0x7F}, // H
+    {0x00, 0x00, 0x41, 0x7F, 0x41, 0x00}, // I
+    {0x00, 0x20, 0x40, 0x41, 0x3F, 0x01}, // J
+    {0x00, 0x7F, 0x08, 0x14, 0x22, 0x41}, // K
+    {0x00, 0x7F, 0x40, 0x40, 0x40, 0x40}, // L
+    {0x00, 0x7F, 0x02, 0x0C, 0x02, 0x7F}, // M
+    {0x00, 0x7F, 0x04, 0x08, 0x10, 0x7F}, // N
+    {0x00, 0x3E, 0x41, 0x41, 0x41, 0x3E}, // O
+    {0x00, 0x7F, 0x09, 0x09, 0x09, 0x06}, // P
+    {0x00, 0x3E, 0x41, 0x51, 0x21, 0x5E}, // Q
+    {0x00, 0x7F, 0x09, 0x19, 0x29, 0x46}, // R
+    {0x00, 0x46, 0x49, 0x49, 0x49, 0x31}, // S
+    {0x00, 0x01, 0x01, 0x7F, 0x01, 0x01}, // T
+    {0x00, 0x3F, 0x40, 0x40, 0x40, 0x3F}, // U
+    {0x00, 0x1F, 0x20, 0x40, 0x20, 0x1F}, // V
+    {0x00, 0x3F, 0x40, 0x38, 0x40, 0x3F}, // W
+    {0x00, 0x63, 0x14, 0x08, 0x14, 0x63}, // X
+    {0x00, 0x07, 0x08, 0x70, 0x08, 0x07}, // Y
+    {0x00, 0x61, 0x51, 0x49, 0x45, 0x43}, // Z
+    {0x00, 0x00, 0x7F, 0x41, 0x41, 0x00}, // [
+    {0x00, 0x55, 0x2A, 0x55, 0x2A, 0x55}, // backslash
+    {0x00, 0x00, 0x41, 0x41, 0x7F, 0x00}, // ]
+    {0x00, 0x04, 0x02, 0x01, 0x02, 0x04}, // ^
+    {0x00, 0x40, 0x40, 0x40, 0x40, 0x40}, // _
+    {0x00, 0x00, 0x01, 0x02, 0x04, 0x00}, // `
+    {0x00, 0x20, 0x54, 0x54, 0x54, 0x78}, // a
+    {0x00, 0x7F, 0x48, 0x44, 0x44, 0x38}, // b
+    {0x00, 0x38, 0x44, 0x44, 0x44, 0x20}, // c
+    {0x00, 0x38, 0x44, 0x44, 0x48, 0x7F}, // d
+    {0x00, 0x38, 0x54, 0x54, 0x54, 0x18}, // e
+    {0x00, 0x08, 0x7E, 0x09, 0x01, 0x02}, // f
+    {0x00, 0x18, 0xA4, 0xA4, 0xA4, 0x7C}, // g
+    {0x00, 0x7F, 0x08, 0x04, 0x04, 0x78}, // h
+    {0x00, 0x00, 0x44, 0x7D, 0x40, 0x00}, // i
+    {0x00, 0x40, 0x80, 0x84, 0x7D, 0x00}, // j
+    {0x00, 0x7F, 0x10, 0x28, 0x44, 0x00}, // k
+    {0x00, 0x00, 0x41, 0x7F, 0x40, 0x00}, // l
+    {0x00, 0x7C, 0x04, 0x18, 0x04, 0x78}, // m
+    {0x00, 0x7C, 0x08, 0x04, 0x04, 0x78}, // n
+    {0x00, 0x38, 0x44, 0x44, 0x44, 0x38}, // o
+    {0x00, 0xFC, 0x24, 0x24, 0x24, 0x18}, // p
+    {0x00, 0x18, 0x24, 0x24, 0x18, 0xFC}, // q
+    {0x00, 0x7C, 0x08, 0x04, 0x04, 0x08}, // r
+    {0x00, 0x48, 0x54, 0x54, 0x54, 0x20}, // s
+    {0x00, 0x04, 0x3F, 0x44, 0x40, 0x20}, // t
+    {0x00, 0x3C, 0x40, 0x40, 0x20, 0x7C}, // u
+    {0x00, 0x1C, 0x20, 0x40, 0x20, 0x1C}, // v
+    {0x00, 0x3C, 0x40, 0x30, 0x40, 0x3C}, // w
+    {0x00, 0x44, 0x28, 0x10, 0x28, 0x44}, // x
+    {0x00, 0x1C, 0xA0, 0xA0, 0xA0, 0x7C}, // y
+    {0x00, 0x44, 0x64, 0x54, 0x4C, 0x44}, // z
+    {0x14, 0x14, 0x14, 0x14, 0x14, 0x14}, // {
+};
+
+const ASCIIFont afont8x6 = {8, 6, (uint8_t *)ascii_8x6};
+const ASCIIFont afont12x6 = {12, 6, nullptr};  // Not implemented
+const ASCIIFont afont16x8 = {16, 8, nullptr};  // Not implemented
+
+// I2C write command
+static void OLED_WriteCmd(uint8_t cmd) {
+    Wire.beginTransmission(OLED_ADDRESS);
+    Wire.write(0x00);  // Command mode
+    Wire.write(cmd);
+    Wire.endTransmission();
+}
+
+// I2C write data
+static void OLED_WriteData(uint8_t data) {
+    Wire.beginTransmission(OLED_ADDRESS);
+    Wire.write(0x40);  // Data mode
+    Wire.write(data);
+    Wire.endTransmission();
+}
+
+// Initialize OLED
+void OLED_Init() {
+    Wire.begin(21, 22);  // SDA=21, SCL=22
+    // 2.42寸屏幕通常对高频信号更敏感，建议先降到 100kHz 测试
+    Wire.setClock(100000);  
+    
+    delay(500); // 增加延时，等待屏幕上电复位完成
+    
+    // Initialization sequence based on SSD1306 datasheet
+    OLED_WriteCmd(0xAE);  // Display off
+    
+    OLED_WriteCmd(0x20);  // Set memory addressing mode
+    OLED_WriteCmd(0x10);  // Page addressing mode
+    
+    OLED_WriteCmd(0xB0);  // Set page start address
+    OLED_WriteCmd(0xC8);  // Set COM output scan direction (COM63 to COM0)
+    
+    OLED_WriteCmd(0x00);  // Set lower column address
+    OLED_WriteCmd(0x10);  // Set higher column address
+    
+    OLED_WriteCmd(0x40);  // Set display start line
+    
+    OLED_WriteCmd(0x81);  // Set contrast control
+    OLED_WriteCmd(0xFF);  // Max contrast
+    
+    OLED_WriteCmd(0xA1);  // Set segment re-map (column 127 to 0)
+    
+    OLED_WriteCmd(0xA6);  // Set normal display mode
+    
+    OLED_WriteCmd(0xA8);  // Set multiplex ratio
+    OLED_WriteCmd(0x3F);  // 1/64 duty
+    
+    OLED_WriteCmd(0xA4);  // Display follows RAM content
+    
+    OLED_WriteCmd(0xD3);  // Set display offset
+    OLED_WriteCmd(0x00);  // No offset
+    
+    OLED_WriteCmd(0xD5);  // Set display clock divide ratio
+    OLED_WriteCmd(0xF0);  // Divide ratio
+    
+    OLED_WriteCmd(0xD9);  // Set pre-charge period
+    OLED_WriteCmd(0x22);
+    
+    OLED_WriteCmd(0xDA);  // Set COM pins hardware configuration
+    OLED_WriteCmd(0x12);
+    
+    OLED_WriteCmd(0xDB);  // Set VCOMH deselect level
+    OLED_WriteCmd(0x20);
+    
+    OLED_WriteCmd(0x8D);  // Enable charge pump
+    OLED_WriteCmd(0x14);
+    
+    OLED_WriteCmd(0xAF);  // Display on
+    
+    OLED_NewFrame();
+    OLED_ShowFrame();
+}
+
+void OLED_DisPlay_On() {
+    OLED_WriteCmd(0x8D);  // Charge pump
+    OLED_WriteCmd(0x14);  // Enable
+    OLED_WriteCmd(0xAF);  // Display on
+}
+
+void OLED_DisPlay_Off() {
+    OLED_WriteCmd(0x8D);  // Charge pump
+    OLED_WriteCmd(0x10);  // Disable
+    OLED_WriteCmd(0xAE);  // Display off
+}
+
+// Clear frame buffer
+void OLED_NewFrame() {
+    memset(OLED_GRAM, 0, sizeof(OLED_GRAM));
+}
+
+// Send frame buffer to display
+void OLED_ShowFrame() {
+    for (uint8_t page = 0; page < 8; page++) {
+        OLED_WriteCmd(0xB0 + page);  // Set page address
+        OLED_WriteCmd(0x00);         // Set lower column address
+        OLED_WriteCmd(0x10);         // Set higher column address
+        
+        for (uint8_t col = 0; col < OLED_WIDTH; col++) {
+            OLED_WriteData(OLED_GRAM[page][col]);
+        }
+    }
+}
+
+// Set pixel in frame buffer
+void OLED_SetPixel(uint8_t x, uint8_t y, OLED_ColorMode color) {
+    if (x >= OLED_WIDTH || y >= OLED_HEIGHT) {
+        return;
+    }
+    
+    uint8_t page = y / 8;
+    uint8_t bit = y % 8;
+    
+    if (color == OLED_COLOR_NORMAL) {
+        OLED_GRAM[page][x] |= (1 << bit);
+    } else {
+        OLED_GRAM[page][x] &= ~(1 << bit);
+    }
+}
+
+// Draw line using Bresenham's algorithm
+void OLED_DrawLine(uint8_t x1, uint8_t y1, uint8_t x2, uint8_t y2, OLED_ColorMode color) {
+    int16_t dx = abs(x2 - x1);
+    int16_t dy = abs(y2 - y1);
+    int16_t sx = (x1 < x2) ? 1 : -1;
+    int16_t sy = (y1 < y2) ? 1 : -1;
+    int16_t err = dx - dy;
+    
+    while (1) {
+        OLED_SetPixel(x1, y1, color);
+        
+        if (x1 == x2 && y1 == y2) {
+            break;
+        }
+        
+        int16_t e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x1 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y1 += sy;
+        }
+    }
+}
+
+// Draw rectangle
+void OLED_DrawRectangle(uint8_t x, uint8_t y, uint8_t w, uint8_t h, OLED_ColorMode color) {
+    OLED_DrawLine(x, y, x + w - 1, y, color);
+    OLED_DrawLine(x + w - 1, y, x + w - 1, y + h - 1, color);
+    OLED_DrawLine(x + w - 1, y + h - 1, x, y + h - 1, color);
+    OLED_DrawLine(x, y + h - 1, x, y, color);
+}
+
+// Draw filled rectangle
+void OLED_DrawFilledRectangle(uint8_t x, uint8_t y, uint8_t w, uint8_t h, OLED_ColorMode color) {
+    for (uint8_t i = 0; i < h; i++) {
+        OLED_DrawLine(x, y + i, x + w - 1, y + i, color);
+    }
+}
+
+// Draw circle using midpoint circle algorithm
+void OLED_DrawCircle(uint8_t x, uint8_t y, uint8_t r, OLED_ColorMode color) {
+    int16_t f = 1 - r;
+    int16_t ddF_x = 1;
+    int16_t ddF_y = -2 * r;
+    int16_t x_pos = 0;
+    int16_t y_pos = r;
+    
+    OLED_SetPixel(x, y + r, color);
+    OLED_SetPixel(x, y - r, color);
+    OLED_SetPixel(x + r, y, color);
+    OLED_SetPixel(x - r, y, color);
+    
+    while (x_pos < y_pos) {
+        if (f >= 0) {
+            y_pos--;
+            ddF_y += 2;
+            f += ddF_y;
+        }
+        x_pos++;
+        ddF_x += 2;
+        f += ddF_x;
+        
+        OLED_SetPixel(x + x_pos, y + y_pos, color);
+        OLED_SetPixel(x - x_pos, y + y_pos, color);
+        OLED_SetPixel(x + x_pos, y - y_pos, color);
+        OLED_SetPixel(x - x_pos, y - y_pos, color);
+        OLED_SetPixel(x + y_pos, y + x_pos, color);
+        OLED_SetPixel(x - y_pos, y + x_pos, color);
+        OLED_SetPixel(x + y_pos, y - x_pos, color);
+        OLED_SetPixel(x - y_pos, y - x_pos, color);
+    }
+}
+
+// Draw filled circle
+void OLED_DrawFilledCircle(uint8_t x, uint8_t y, uint8_t r, OLED_ColorMode color) {
+    for (int16_t dy = -r; dy <= r; dy++) {
+        for (int16_t dx = -r; dx <= r; dx++) {
+            if (dx * dx + dy * dy <= r * r) {
+                OLED_SetPixel(x + dx, y + dy, color);
+            }
+        }
+    }
+}
+
+// Print ASCII character
+void OLED_PrintASCIIChar(uint8_t x, uint8_t y, char ch, const ASCIIFont *font, OLED_ColorMode color) {
+    if (ch < ' ' || ch > '~') {
+        ch = ' ';
+    }
+    
+    uint8_t index = ch - ' ';
+    const uint8_t *charData = font->chars + index * font->w;
+    
+    for (uint8_t col = 0; col < font->w; col++) {
+        uint8_t data = charData[col];
+        for (uint8_t row = 0; row < font->h; row++) {
+            if (data & (1 << row)) {
+                OLED_SetPixel(x + col, y + row, color);
+            } else if (color == OLED_COLOR_REVERSED) {
+                OLED_SetPixel(x + col, y + row, OLED_COLOR_NORMAL);
+            }
+        }
+    }
+}
+
+// Print ASCII string
+void OLED_PrintASCIIString(uint8_t x, uint8_t y, const char *str, const ASCIIFont *font, OLED_ColorMode color) {
+    uint8_t cur_x = x;
+    while (*str) {
+        if (cur_x + font->w > OLED_WIDTH) {
+            break;
+        }
+        OLED_PrintASCIIChar(cur_x, y, *str, font, color);
+        cur_x += font->w;
+        str++;
+    }
+}

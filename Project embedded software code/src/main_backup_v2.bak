@@ -1,0 +1,162 @@
+#include <Arduino.h>
+#include "oled.h"
+#include "wifi_server.h"
+#include "voice_recognition.h"
+#include "stm32_comm.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+
+#define LED_PIN 2
+
+// WiFi配置
+const char* ssid = "zmy";
+const char* password = "zmy060521";
+
+// LED状态
+int led_state = 0;
+
+// FreeRTOS 句柄
+QueueHandle_t voiceQueue;
+TaskHandle_t voiceTaskHandle;
+
+// 语音识别任务函数 (运行在 Core 0)
+void voiceTask(void *parameter) {
+    while (1) {
+        // 执行语音识别 (阻塞式，约1秒)
+        VoiceCommand cmd = voice_loop();
+        
+        // 如果识别到命令，发送到队列
+        if (cmd != CMD_NONE) {
+            xQueueSend(voiceQueue, &cmd, 0);
+        }
+        
+        // 稍微让出一点 CPU 时间 (虽然 voice_loop 里的 i2s_read 已经是阻塞等待了)
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+}
+
+void setup() {
+    Serial.begin(115200);
+    delay(2000); 
+    
+    Serial.println("\n=================================");
+    Serial.println("ESP32 Control Math System START");
+    Serial.println("=================================\n");
+    
+    pinMode(LED_PIN, OUTPUT);
+    
+    // 1. 初始化 OLED
+    Serial.println("Initializing OLED...");
+    OLED_Init();
+    Serial.println("OLED OK!");
+
+    // 2. 初始化语音识别硬件
+    voice_setup();
+    
+    // 3. 初始化 STM32 通信
+    STM32_Init();
+    Serial.println("STM32 Comm Initialized");
+    
+    // 4. 创建队列 (长度5，存储 VoiceCommand)
+    voiceQueue = xQueueCreate(5, sizeof(VoiceCommand));
+    
+    // 5. 创建语音识别任务
+    // 栈大小: 8192 (Edge Impulse 需要较大栈空间)
+    // 优先级: 1
+    // 核心: 0 (将繁重的语音任务放在 Core 0，让 Core 1 专心处理 WiFi 和 UI)
+    xTaskCreatePinnedToCore(
+        voiceTask,      /* 任务函数 */
+        "VoiceTask",    /* 任务名称 */
+        8192,           /* 栈大小 */
+        NULL,           /* 参数 */
+        1,              /* 优先级 */
+        &voiceTaskHandle, /* 句柄 */
+        0);             /* 运行核心 Core 0 */
+
+    Serial.println("Voice Task Started on Core 0");
+
+    // 6. 初始化 WiFi
+    if(WiFi_Init(ssid, password)) {
+        WebServer_Init();
+        Serial.println("=================================\n");
+    } else {
+        while(1) delay(1000);
+    }
+}
+
+// OLED 刷新计时器
+unsigned long lastOledUpdate = 0;
+const unsigned long OLED_INTERVAL = 500; // 每 500ms 刷新一次屏幕
+
+void loop() {
+    // 1. 处理 Web 服务器 (现在是非阻塞的，响应会很快！)
+    WebServer_Handle();
+
+    // 2. 检查语音命令队列
+    VoiceCommand cmd;
+    if (xQueueReceive(voiceQueue, &cmd, 0) == pdTRUE) {
+        if (cmd == CMD_KAIDENG) {
+            led_state = 1;
+            digitalWrite(LED_PIN, HIGH);
+            Serial.println("Voice Command Received: ON");
+        } else if (cmd == CMD_GUANDENG) {
+            led_state = 0;
+            digitalWrite(LED_PIN, LOW);
+            Serial.println("Voice Command Received: OFF");
+        }
+    }
+    
+    // 3. 更新 UI (使用非阻塞计时器)
+    if (millis() - lastOledUpdate > OLED_INTERVAL) {
+        lastOledUpdate = millis();
+        
+        UpdateMessageDisplay();
+        
+        if(!IsShowingMessage()) {
+            OLED_NewFrame();
+            
+            // 显示 LED 状态
+            if (led_state) {
+                OLED_PrintASCIIString(0, 0, "LED: ON ", &afont8x6, OLED_COLOR_NORMAL);
+            } else {
+                OLED_PrintASCIIString(0, 0, "LED: OFF", &afont8x6, OLED_COLOR_NORMAL);
+            }
+
+            // 获取并显示 STM32 数据
+            STM32Data stmData;
+            if (STM32_GetData(&stmData)) {
+                char buf[20];
+                
+                // 显示输出电压
+                snprintf(buf, sizeof(buf), "Vo:%.1fV", stmData.output_voltage);
+                OLED_PrintASCIIString(0, 12, buf, &afont8x6, OLED_COLOR_NORMAL);
+                
+                // 显示输出电流
+                snprintf(buf, sizeof(buf), "Io:%.2fA", stmData.output_current);
+                OLED_PrintASCIIString(64, 12, buf, &afont8x6, OLED_COLOR_NORMAL);
+                
+                // 显示电池电压
+                snprintf(buf, sizeof(buf), "Bat:%.1fV", stmData.battery_voltage);
+                OLED_PrintASCIIString(0, 24, buf, &afont8x6, OLED_COLOR_NORMAL);
+                
+                // 显示温度
+                snprintf(buf, sizeof(buf), "T:%.1fC", stmData.temperature);
+                OLED_PrintASCIIString(64, 24, buf, &afont8x6, OLED_COLOR_NORMAL);
+                
+                // 显示交流电压
+                snprintf(buf, sizeof(buf), "AC:%.0fV", stmData.ac_voltage);
+                OLED_PrintASCIIString(0, 36, buf, &afont8x6, OLED_COLOR_NORMAL);
+            } else {
+                OLED_PrintASCIIString(0, 20, "Waiting for STM32...", &afont8x6, OLED_COLOR_NORMAL);
+            }
+            
+            // 显示 IP 地址 (移到底部)
+            char ip[20];
+            snprintf(ip, sizeof(ip), "IP:%s", WiFi.localIP().toString().c_str());
+            OLED_PrintASCIIString(0, 54, ip, &afont8x6, OLED_COLOR_NORMAL);
+            
+            OLED_ShowFrame();
+        }
+    }
+}
